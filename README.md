@@ -8,7 +8,11 @@
 
 
 
-Uploading Пример работы программы.mp4…
+
+
+https://github.com/user-attachments/assets/4f5f64a7-81e9-42f6-96b4-11780c8fea1e
+
+
 
 
 
