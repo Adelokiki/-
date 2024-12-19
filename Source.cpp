@@ -1,123 +1,112 @@
 #include <iostream>
 #include <fstream>
 #include <winsock2.h>
-#include <ws2tcpip.h>  // Для InetPtonA
 #pragma comment(lib, "ws2_32.lib")
 
-#define SERVER_IP "127.0.0.1"
 #define PORT 5000
 #define BUFFER_SIZE 1024
 
-void sendFileToServer(SOCKET clientSocket, sockaddr_in& serverAddr) {
+void receiveFile(SOCKET serverSocket, sockaddr_in& clientAddr, int clientAddrSize) {
     char buffer[BUFFER_SIZE];
 
-    // Ввод имени файла
-    std::cout << "Enter the file name to send: ";
-    std::string filename;
-    std::cin >> filename;
+    // Получаем имя файла
+    int len = recvfrom(serverSocket, buffer, BUFFER_SIZE, 0, (sockaddr*)&clientAddr, &clientAddrSize);
+    buffer[len] = '\0';
+    std::string filename = std::string(buffer);
+    std::cout << "Receive the file: " << filename << std::endl;
+
+    // Отправляем подтверждение (ACK) на имя файла
+    sendto(serverSocket, "ACK", 3, 0, (sockaddr*)&clientAddr, clientAddrSize);
+
+    // Получаем размер файла
+    uint32_t fileSize;
+    recvfrom(serverSocket, (char*)&fileSize, sizeof(fileSize), 0, (sockaddr*)&clientAddr, &clientAddrSize);
+    std::cout << "File size: " << fileSize << " bytes\n";
+
+    // Отправляем подтверждение (ACK) на размер файла
+    sendto(serverSocket, "ACK", 3, 0, (sockaddr*)&clientAddr, clientAddrSize);
+
+    // Получаем содержимое файла
+    std::ofstream outFile(filename, std::ios::binary);
+    uint32_t receivedBytes = 0;
+    while (receivedBytes < fileSize) {
+        int len = recvfrom(serverSocket, buffer, BUFFER_SIZE, 0, (sockaddr*)&clientAddr, &clientAddrSize);
+        outFile.write(buffer, len);
+        receivedBytes += len;
+    }
+    outFile.close();
+    std::cout << "File saved.\n";
+}
+
+void sendFile(SOCKET serverSocket, sockaddr_in& clientAddr, int clientAddrSize) {
+    char buffer[BUFFER_SIZE];
+
+    // Получаем запрос имени файла
+    int len = recvfrom(serverSocket, buffer, BUFFER_SIZE, 0, (sockaddr*)&clientAddr, &clientAddrSize);
+    buffer[len] = '\0';
+    std::string filename = buffer;
+    std::cout << "Request file: " << filename << std::endl;
 
     std::ifstream inFile(filename, std::ios::binary);
     if (!inFile.is_open()) {
-        std::cerr << "Error: Failed to open file.\n";
+        std::cerr << "file not found.\n";
         return;
     }
-
-    // Отправляем команду "UPLOAD"
-    std::string command = "UPLOAD";
-    sendto(clientSocket, command.c_str(), command.size(), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
-
-    // Отправляем имя файла
-    sendto(clientSocket, filename.c_str(), filename.size(), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
-
-    // Получаем подтверждение (ACK)
-    recvfrom(clientSocket, buffer, BUFFER_SIZE, 0, NULL, NULL);
 
     // Отправляем размер файла
     inFile.seekg(0, std::ios::end);
     uint32_t fileSize = inFile.tellg();
     inFile.seekg(0, std::ios::beg);
-    sendto(clientSocket, (char*)&fileSize, sizeof(fileSize), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+    sendto(serverSocket, (char*)&fileSize, sizeof(fileSize), 0, (sockaddr*)&clientAddr, clientAddrSize);
 
     // Получаем подтверждение (ACK)
-    recvfrom(clientSocket, buffer, BUFFER_SIZE, 0, NULL, NULL);
+    recvfrom(serverSocket, buffer, BUFFER_SIZE, 0, (sockaddr*)&clientAddr, &clientAddrSize);
 
-    // Отправляем файл блоками
+    // Отправляем содержимое файла
     while (!inFile.eof()) {
         inFile.read(buffer, BUFFER_SIZE);
         int bytesRead = inFile.gcount();
-        sendto(clientSocket, buffer, bytesRead, 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+        sendto(serverSocket, buffer, bytesRead, 0, (sockaddr*)&clientAddr, clientAddrSize);
     }
     inFile.close();
-    std::cout << "The file was successfully sent to the server.\n";
-}
-
-void receiveFileFromServer(SOCKET clientSocket, sockaddr_in& serverAddr) {
-    char buffer[BUFFER_SIZE];
-
-    // Отправляем команду "DOWNLOAD"
-    std::string command = "DOWNLOAD";
-    sendto(clientSocket, command.c_str(), command.size(), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
-
-    // Вводим имя файла для скачивания
-    std::cout << "Enter the name of the file to download: ";
-    std::string filename;
-    std::cin >> filename;
-
-    sendto(clientSocket, filename.c_str(), filename.size(), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
-
-    // Получаем размер файла
-    uint32_t fileSize;
-    recvfrom(clientSocket, (char*)&fileSize, sizeof(fileSize), 0, NULL, NULL);
-
-    // Отправляем подтверждение (ACK)
-    sendto(clientSocket, "ACK", 3, 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
-
-    // Получаем файл
-    std::ofstream outFile(filename, std::ios::binary);
-    uint32_t receivedBytes = 0;
-    while (receivedBytes < fileSize) {
-        int len = recvfrom(clientSocket, buffer, BUFFER_SIZE, 0, NULL, NULL);
-        outFile.write(buffer, len);
-        receivedBytes += len;
-    }
-    outFile.close();
-    std::cout << "The file was successfully received from the server.\n";
+    std::cout << "File sent!\n";
 }
 
 int main() {
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-    SOCKET clientSocket = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET serverSocket = socket(AF_INET, SOCK_DGRAM, 0);
 
-    sockaddr_in serverAddr;
+    sockaddr_in serverAddr, clientAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(PORT);
-    InetPtonA(AF_INET, SERVER_IP, &serverAddr.sin_addr);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
 
+    bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr));
+
+    std::cout << "UDP-server started. Waiting for client...\n";
+
+    int clientAddrSize = sizeof(clientAddr);
+    char command[BUFFER_SIZE];
+
+    // Основной цикл
     while (true) {
-        std::cout << "\n1. Send file to server\n";
-        std::cout << "2. Download file to server\n";
-        std::cout << "3. Exit\n";
-        std::cout << "Choose option: ";
-        int choice;
-        std::cin >> choice;
+        int len = recvfrom(serverSocket, command, BUFFER_SIZE, 0, (sockaddr*)&clientAddr, &clientAddrSize);
+        command[len] = '\0';
 
-        if (choice == 1) {
-            sendFileToServer(clientSocket, serverAddr);
+        if (std::string(command) == "UPLOAD") {
+            receiveFile(serverSocket, clientAddr, clientAddrSize);
         }
-        else if (choice == 2) {
-            receiveFileFromServer(clientSocket, serverAddr);
-        }
-        else if (choice == 3) {
-            break;
+        else if (std::string(command) == "DOWNLOAD") {
+            sendFile(serverSocket, clientAddr, clientAddrSize);
         }
         else {
-            std::cout << "Wrong choice. Try again.\n";
+            std::cout << "Unknown command: " << command << std::endl;
         }
     }
 
-    closesocket(clientSocket);
+    closesocket(serverSocket);
     WSACleanup();
     return 0;
 }
