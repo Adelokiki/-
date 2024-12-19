@@ -1,123 +1,123 @@
-#define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
+#include <iostream>
+#include <fstream>
+#include <winsock2.h>
+#include <ws2tcpip.h>  // Для InetPtonA
+#pragma comment(lib, "ws2_32.lib")
 
-#include<iostream>
-#include<fstream>
-#include<string>
-#include<experimental/filesystem>
-#pragma warning(disable:4996)
-#pragma comment (lib, "ws2_32.lib")
-#include<WinSock2.h>
+#define SERVER_IP "127.0.0.1"
+#define PORT 5000
+#define BUFFER_SIZE 1024
 
-using namespace std;
+void sendFileToServer(SOCKET clientSocket, sockaddr_in& serverAddr) {
+    char buffer[BUFFER_SIZE];
 
-bool file_ready_for_confirmation = false;
+    // Ввод имени файла
+    std::cout << "Enter the file name to send: ";
+    std::string filename;
+    std::cin >> filename;
 
-void send_file(SOCKET* sock) {
-    string file_name;
-    cout << "Enter the name of the file to send to the server: ";
-    cin >> file_name;
-
-    fstream file;
-    file.open(file_name, ios_base::in | ios_base::binary);
-
-    if (file.is_open()) {
-        int file_size = experimental::filesystem::file_size(file_name);
-        char* bytes = new char[file_size];
-        file.read(bytes, file_size);
-
-        send(*sock, to_string(file_size).c_str(), 16, 0);
-        send(*sock, file_name.c_str(), 32, 0);
-        send(*sock, bytes, file_size, 0);
-
-        cout << "File \"" << file_name << "\" successfully sent to the server.\n";
-        file_ready_for_confirmation = true;
-
-        delete[] bytes;
-    }
-    else {
-        cout << "Error: file not found.\n";
+    std::ifstream inFile(filename, std::ios::binary);
+    if (!inFile.is_open()) {
+        std::cerr << "Error: Failed to open file.\n";
+        return;
     }
 
-    file.close();
+    // Отправляем команду "UPLOAD"
+    std::string command = "UPLOAD";
+    sendto(clientSocket, command.c_str(), command.size(), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+
+    // Отправляем имя файла
+    sendto(clientSocket, filename.c_str(), filename.size(), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+
+    // Получаем подтверждение (ACK)
+    recvfrom(clientSocket, buffer, BUFFER_SIZE, 0, NULL, NULL);
+
+    // Отправляем размер файла
+    inFile.seekg(0, std::ios::end);
+    uint32_t fileSize = inFile.tellg();
+    inFile.seekg(0, std::ios::beg);
+    sendto(clientSocket, (char*)&fileSize, sizeof(fileSize), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+
+    // Получаем подтверждение (ACK)
+    recvfrom(clientSocket, buffer, BUFFER_SIZE, 0, NULL, NULL);
+
+    // Отправляем файл блоками
+    while (!inFile.eof()) {
+        inFile.read(buffer, BUFFER_SIZE);
+        int bytesRead = inFile.gcount();
+        sendto(clientSocket, buffer, bytesRead, 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+    }
+    inFile.close();
+    std::cout << "The file was successfully sent to the server.\n";
 }
 
-void recv_file(SOCKET* sock) {
-    char file_size_str[16];
-    char file_name[32];
+void receiveFileFromServer(SOCKET clientSocket, sockaddr_in& serverAddr) {
+    char buffer[BUFFER_SIZE];
 
-    recv(*sock, file_size_str, 16, 0);
-    int file_size = atoi(file_size_str);
-    char* bytes = new char[file_size];
+    // Отправляем команду "DOWNLOAD"
+    std::string command = "DOWNLOAD";
+    sendto(clientSocket, command.c_str(), command.size(), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
 
-    recv(*sock, file_name, 32, 0);
+    // Вводим имя файла для скачивания
+    std::cout << "Enter the name of the file to download: ";
+    std::string filename;
+    std::cin >> filename;
 
-    fstream file;
-    file.open(file_name, ios_base::out | ios_base::binary);
+    sendto(clientSocket, filename.c_str(), filename.size(), 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
 
-    if (file.is_open()) {
-        recv(*sock, bytes, file_size, 0);
-        file.write(bytes, file_size);
-        cout << "File \"" << file_name << "\" successfully received from the server.\n";
-        file_ready_for_confirmation = true;
+    // Получаем размер файла
+    uint32_t fileSize;
+    recvfrom(clientSocket, (char*)&fileSize, sizeof(fileSize), 0, NULL, NULL);
+
+    // Отправляем подтверждение (ACK)
+    sendto(clientSocket, "ACK", 3, 0, (sockaddr*)&serverAddr, sizeof(serverAddr));
+
+    // Получаем файл
+    std::ofstream outFile(filename, std::ios::binary);
+    uint32_t receivedBytes = 0;
+    while (receivedBytes < fileSize) {
+        int len = recvfrom(clientSocket, buffer, BUFFER_SIZE, 0, NULL, NULL);
+        outFile.write(buffer, len);
+        receivedBytes += len;
     }
-    else {
-        cout << "Error saving file.\n";
-    }
-
-    delete[] bytes;
-    file.close();
+    outFile.close();
+    std::cout << "The file was successfully received from the server.\n";
 }
-
 
 int main() {
-    cout << "=== CLIENT ===" << endl;
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-    WORD dllVer = MAKEWORD(2, 1);
-    WSAData wsad;
-    WSAStartup(dllVer, &wsad);
+    SOCKET clientSocket = socket(AF_INET, SOCK_DGRAM, 0);
 
-    SOCKADDR_IN addr_info;
-    memset(&addr_info, 0, sizeof(SOCKADDR_IN));
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(PORT);
+    InetPtonA(AF_INET, SERVER_IP, &serverAddr.sin_addr);
 
-    addr_info.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
-    addr_info.sin_port = htons(4321);
-    addr_info.sin_family = AF_INET;
+    while (true) {
+        std::cout << "\n1. Send file to server\n";
+        std::cout << "2. Download file to server\n";
+        std::cout << "3. Exit\n";
+        std::cout << "Choose option: ";
+        int choice;
+        std::cin >> choice;
 
-    SOCKET s_client = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (connect(s_client, (sockaddr*)&addr_info, sizeof(addr_info)) == 0) {
-        cout << "Connection to the server established.\n";
-
-        while (true) {
-            cout << "--- MENU ---\n";
-            cout << "1. Send a file to the server\n";
-            cout << "2. Receive a file from the server\n";
-            cout << "3. Exit\n";
-            cout << "Enter your choice: ";
-
-            int choice;
-            cin >> choice;
-
-            if (choice == 1) {
-                send_file(&s_client);
-            }
-            else if (choice == 2) {
-                recv_file(&s_client);
-            }
-            else if (choice == 3) {
-                cout << "Client shutting down.\n";
-                break;
-            }
-            else {
-                cout << "Invalid choice. Please try again.\n";
-            }
+        if (choice == 1) {
+            sendFileToServer(clientSocket, serverAddr);
+        }
+        else if (choice == 2) {
+            receiveFileFromServer(clientSocket, serverAddr);
+        }
+        else if (choice == 3) {
+            break;
+        }
+        else {
+            std::cout << "Wrong choice. Try again.\n";
         }
     }
-    else {
-        cout << "Error connecting to the server.\n";
-    }
 
-    closesocket(s_client);
+    closesocket(clientSocket);
     WSACleanup();
     return 0;
 }
