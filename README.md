@@ -7,7 +7,10 @@
 
 
 
-https://github.com/user-attachments/assets/5e062e66-5ec1-438c-8698-223dc262f49c
+
+Uploading Пример работы программы.mp4…
+
+
 
 
 
