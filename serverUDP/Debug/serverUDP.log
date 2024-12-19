@@ -1,0 +1,4 @@
+﻿  Source.cpp
+C:\Users\Nikitosik\source\repos\serverUDP\serverUDP\Source.cpp(58,23): warning C4244: инициализация: преобразование "std::streamoff" в "uint32_t", возможна потеря данных
+C:\Users\Nikitosik\source\repos\serverUDP\serverUDP\Source.cpp(68,23): warning C4244: инициализация: преобразование "std::streamsize" в "int", возможна потеря данных
+  serverUDP.vcxproj -> C:\Users\Nikitosik\source\repos\serverUDP\Debug\serverUDP.exe
